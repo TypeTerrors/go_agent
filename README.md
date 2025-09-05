@@ -1,54 +1,24 @@
-# Agent CLI — your codebase concierge (that doesn’t drink coffee)
+# Agent CLI — your codebase concierge
 
-Welcome! This tiny command‑line agent helps you make safe, organized changes to a project—like reading files, listing folders, writing new files, or cleaning things up—step by step, with brains and brakes.
-
-It’s designed to be friendly for everyone: you don’t need to be a developer to use it. If you can describe your task in a sentence, the agent will plan it, run carefully‑scoped file tools, and show you what happened.
+Meet a small, careful CLI that plans and performs safe file operations inside one folder. Give it a goal; it makes a plan, calls tools (read, list, write, delete), and reports every step.
 
 ---
 
-## What this is (and isn’t)
-- What it is: a command‑line assistant that plans and performs small, safe file operations inside a single project folder. It’s like a careful handyman for your code or documents.
-- What it isn’t: a full remote computer controller. It can’t install software, browse the web, or run arbitrary shell commands. It stays in its lane.
+## See it in action
+
+- Help tour
+
+  ![Agent help](docs/assets/agent-help.gif)
+
+- Project overview (list + read)
+
+  ![Agent read](docs/assets/agent-read.gif)
 
 ---
 
-## How it works (plain English)
-1. You tell the agent what you want (a short sentence). Example: “Create README.md with install/run steps; then show the directory listing.”
-2. The agent makes a plan. It figures out which tools to use (like “read file”, “write file”, “list directory”, or “delete path”).
-3. It executes tools in sensible phases. Independent tasks run in parallel, but anything that depends on something else will wait its turn.
-4. It keeps your files safe:
-   - Only works inside the folder you point it at (no wandering into other parts of your computer)
-   - Uses read/write locks so tools don’t bump into each other
-   - Writes are atomic (temporary file + rename) so you never see half‑written files
-5. It shows you what it did, step by step, with clear logs.
+## Quick start
 
-That’s it—plan, run, report, stop.
-
----
-
-## What you can ask it to do
-- List folders and files (shallow or deep)
-- Read a file’s contents
-- Write or update a file
-- Delete a file or folder (carefully)
-
-If your request needs those tools, it can probably do it.
-
----
-
-## Requirements
-- A Mac or Linux terminal (Windows works in WSL or any shell that supports Go tools)
-- Go (1.21+) installed
-- An OpenAI API key (the agent uses GPT to plan steps)
-
-Keep your API key private. You’ll set it as an environment variable.
-
----
-
-## Quick setup (3 steps)
-1) Install dependencies
-- Make sure Go is installed: https://go.dev/dl/
-- In this folder, run:
+1) Build
 
 ```
 make build
@@ -57,111 +27,159 @@ make build
 2) Set your OpenAI API key
 
 ```
-export OPENAI_API_KEY=sk-...   # paste your key here
+export OPENAI_API_KEY=sk-...
 ```
 
-3) Try a dry run
+3) Try it
 
-```
-./bin/agent --help
-```
-
-You’ll see a friendly, styled help page with examples.
-
----
-
-## Demos
-
-Help
-
-![Agent help](docs/assets/agent-help.gif)
-
-Read (project overview)
-
-![Agent read](docs/assets/agent-read.gif)
-
----
-
-## Everyday use
-- Show help
 ```
 ./bin/agent --help
 ```
 
-- Run a simple task in the current folder
+Or run a task:
+
 ```
-./bin/agent -src . -concurrency 6 -steps 16 -model gpt-4o "Create README.md with install/run steps; then show the directory listing."
+./bin/agent -src . -concurrency 6 -steps 8 -model gpt-4o "Create README.md and list the directory."
 ```
 
-- Safer, faster typed commands with Make (optional)
+---
+
+## What it does (in plain English)
+
+- Plans tool calls for your request
+- Executes independent steps in parallel, dependent ones in order
+- Stays inside the --src directory sandbox
+- Uses read/write locks and atomic writes to keep files safe
+- Shows concise, styled logs of what happened
+
+---
+
+## CLI flags (what they mean)
+
+- --src: directory sandbox (default .)
+- --concurrency: max parallel tool executions per phase (default 4)
+- --steps: max assistant planning turns (default 16)
+- --model: OpenAI chat model name (default gpt-4o)
+- --timeout: per-turn timeout (default 120s)
+- --log: pretty logs on/off (default true)
+- --tool-choice: tool calling behavior: auto (default) | required | none
+- --require-tool: require a specific tool (repeatable)
+
+---
+
+## Flag recipes (combinations that matter)
+
+- Fast local edits with clear logs
+  - Why: Everyday tasks where you want quick feedback and safety.
+  - Example:
+    ```
+    ./bin/agent -src . -concurrency 6 -steps 12 -timeout 90s -log true "Write CHANGELOG.md and list the project."
+    ```
+
+- Force tool use on every turn
+  - Why: Ensure the agent always manipulates the workspace instead of explaining.
+  - Example:
+    ```
+    ./bin/agent -src . --tool-choice required "Create README.md, then read it back."
+    ```
+
+- No tools (explain only)
+  - Why: Ask for analysis, plans, or walkthroughs without touching files.
+  - Example:
+    ```
+    ./bin/agent -src . --tool-choice none "Explain what this repository does and how to improve docs."
+    ```
+
+- Require specific tools
+  - Why: Enforce that certain operations occur before finishing.
+  - Notes: The agent will keep prompting itself until all required tools are called in a turn.
+  - Example:
+    ```
+    ./bin/agent -src . --tool-choice auto --require-tool write_file --require-tool read_file \
+      "Create a CONTRIBUTING.md and show its contents."
+    ```
+
+- Concurrency tuning
+  - Why: Speed up independent operations, but don’t overdo it for tiny projects.
+  - Example:
+    ```
+    ./bin/agent -src . -concurrency 8 "List the tree and read several files."
+    ```
+
+- Short runs for tight feedback loops
+  - Why: Keep iteration quick; bail out early.
+  - Example:
+    ```
+    ./bin/agent -src . -steps 4 -timeout 45s "Sketch a plan for refactoring README structure."
+    ```
+
+- Quiet mode
+  - Why: Reduce terminal noise (logs off) when embedding in scripts.
+  - Example:
+    ```
+    ./bin/agent -src . -log=false "Write a brief SUMMARY.md."
+    ```
+
+- Safety-first destructive ops
+  - Why: You intend to delete paths; keep scope tight.
+  - Example:
+    ```
+    ./bin/agent -src ./notes "Delete the .cache folder and list the directory."
+    ```
+
+Edge cases and interactions
+- --tool-choice none + --require-tool: mutually at odds. With tools disabled, required tools cannot be satisfied; use auto or required.
+- Multiple --require-tool flags: all must be called within the same turn before the run completes.
+- High --concurrency doesn’t bypass dependencies; phases still enforce ordering.
+- Short --timeout with long tasks may lead to retries; increase timeout or reduce steps.
+
+---
+
+## Make helpers
+
 ```
-make run RUN_ARGS='-src . --help'
+make run RUN_ARGS='--help'
 make test
-make test-one TEST_RUN="^TestWriteReadFile$"
+make test-one TEST_RUN='^TestWriteReadFile$'
 ```
 
 ---
 
-## What the flags mean (human terms)
-- --src: the folder the agent can see and touch. Defaults to the current folder (.).
-- --concurrency: how many independent actions it may run at the same time. Default 4.
-- --steps: the maximum number of back‑and‑forth planning turns. Default 16.
-- --model: the AI model name (e.g., gpt‑4o). Default gpt‑4o.
-- --timeout: a safety timer for each step (e.g., 120s).
-- --log: show pretty logs (true/false). Default true.
-- --tool-choice: control tool calling behavior: auto (default), required (force tool use every turn), none (disable tools).
-- --require-tool: require a specific tool to be called (repeatable). Example: --require-tool write_file
+## Safety guarantees
 
-You can combine these however you like.
-
----
-
-## Safety features that protect your files
-- Project sandbox: it stays inside the --src directory you choose
-- Read/Write guards: the agent won’t let two tasks fight over the same file
-- Atomic writes: content is written to a temp file then swapped in, so you don’t get partial files
-- Bounded steps: it stops after the max steps to avoid runaway loops
-
-If anything fails, you’ll get a clear error message.
+- Project sandbox: never leaves --src
+- Read/Write locks per path
+- Atomic writes via temp + rename
+- Bounded steps to avoid runaway loops
 
 ---
 
 ## Troubleshooting
-- “command not found: agent” — Build it first: `make build` (binary goes to `./bin/agent`).
-- “OPENAI_API_KEY not set” — Set it in your shell: `export OPENAI_API_KEY=sk-...` (use your real key).
-- “permission denied” — Make sure you have write access to the folder you pointed at with `--src`.
-- No output? Add `--log true` (it’s on by default). Try a simpler prompt to verify.
 
-If you’re stuck, try running the tests to confirm the tools work:
-```
-make test
-```
+- "command not found: agent" — run `make build` (binary at ./bin/agent)
+- "OPENAI_API_KEY not set" — export it in your shell
+- Permission errors — ensure you have write access to --src
+- No output — add `--log true` (default already true), try a simpler prompt
 
 ---
 
-## For the curious (what’s under the hood?)
-- Built in Go; uses OpenAI for planning
-- Cobra + Fang for a polished, colorful help screen
-- Tools implemented as safe, composable operations with dependency‑aware phases
-- Tests verify core tools: list, read, write, delete
+## Under the hood
+
+- Go + OpenAI client
+- Cobra + Fang for CLI UX
+- Dependency-aware phases for tools
+- Tests for list/read/write/delete
 
 ---
 
-## Responsible use
-- The agent can delete files if you ask it to. Double‑check your `--src` path and read the logs.
-- Never share your API key. Don’t commit it to version control.
+## One-minute copy/paste
 
----
-
-## One‑minute quick start (copy/paste)
 ```
 make build
 export OPENAI_API_KEY=sk-...
 ./bin/agent --help
 ./bin/agent -src . -concurrency 6 -steps 8 -model gpt-4o "Create a CONTRIBUTING.md and list the project files."
 ```
-
-High‑five. You’re ready to put your codebase concierge to work.
 
 ---
 
