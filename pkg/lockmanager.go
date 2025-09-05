@@ -6,27 +6,25 @@ import (
 	"sync"
 )
 
-// LockManager manages file locks for concurrent operations.
+// LockManager manages per-path locks and atomic writes for FS tools.
+// Flow: initialized during Agent.Init(); used by Tooling() and phases.
 type LockManager struct{ m sync.Map } // abs path -> *sync.RWMutex
 
-// NewLockManager creates a new LockManager instance.
+// NewLockManager constructs a LockManager.
+// Flow: called by setLockManager() during Init.
 func NewLockManager() *LockManager {
 	return &LockManager{}
 }
 
-// Get retrieves or creates a lock for the specified path.
-// Parameters:
-// - path: the file path for which to get the lock.
+// Get returns an RWMutex for a path (stable per absolute path).
+// Flow: called in Tooling() before FS ops to coordinate access.
 func (lm *LockManager) Get(path string) *sync.RWMutex {
 	v, _ := lm.m.LoadOrStore(path, &sync.RWMutex{})
 	return v.(*sync.RWMutex)
 }
 
-// WriteAtomic writes data to a file atomically.
-// It ensures the directory exists and uses a temporary file for atomicity.
-// Parameters:
-// - filename: the name of the file to write.
-// - data: the data to write to the file.
+// WriteAtomic persists bytes atomically (dir ensure + rename).
+// Flow: used by write_file in Tooling().
 func (lm *LockManager) WriteAtomic(filename string, data []byte) error {
 	dir := filepath.Dir(filename)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

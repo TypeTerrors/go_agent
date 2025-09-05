@@ -11,11 +11,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// PlanPhases builds phases (levels) of indices that can run in parallel.
-// It uses deterministic and sensible rules to order operations.
-// Parameters:
-// - root: the root directory for the operations.
-// - calls: a slice of ToolCallLite representing the tool calls to be planned.
+// PlanPhases orders tool calls into sequential phases with intra-phase parallelism.
+// Flow: called by Run() after extracting tool calls.
+// Yields: none; returns phase layers for execution.
 func (a *Agent) PlanPhases(root string, calls []pkg.ToolCallLite) ([][]int, error) {
 	// Fill in normalized paths for planning
 	for i := range calls {
@@ -137,12 +135,9 @@ func (a *Agent) PlanPhases(root string, calls []pkg.ToolCallLite) ([][]int, erro
 	return phases, nil
 }
 
-// RunPhases executes the planned phases of tool calls.
-// It manages concurrency and error handling for each phase.
-// Parameters:
-// - toolCalls: a slice of ToolCallLite representing the tool calls to be executed.
-// - phases: a slice of slices of integers representing the phases of execution.
-// - msg: the OpenAI chat completion message containing the tool calls.
+// RunPhases executes phases sequentially, tool calls concurrently per phase.
+// Flow: invoked by Run() after planning.
+// Yields: appends ToolMessage results for each call; no final user text here.
 func (a *Agent) RunPhases(toolCalls []pkg.ToolCallLite, phases [][]int, msg openai.ChatCompletionMessage) error {
 
 	// Collect results for each tool call index

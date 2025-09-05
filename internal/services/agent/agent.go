@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 	"strings"
+	"time"
 
 	"cds.agents.app/pkg"
 	"github.com/openai/openai-go/v2"
@@ -31,19 +31,22 @@ type Agent struct {
 	SettingsView string
 }
 
-// NewAgent creates a new Agent instance with the provided configuration.
-// It initializes the agent's components.
+// NewAgent constructs the Agent with initial configuration.
+// Flow: called by CLI to create the agent before any execution.
+// Yields: no yielding; prepares runtime state.
 func NewAgent(config pkg.Config) *Agent {
 	agent := &Agent{}
 	agent.Init(config.Model, config.Src, config.Concurrency, config.Steps, config.Timeout, config.Prompt)
 	agent.ToolChoice = config.ToolChoice
 	agent.RequireTools = config.RequireTools
-	agent.Log = pkg.NewLogger(config.Log)
+	lg := pkg.NewLogger(config.Log)
+	agent.Log = lg
 	return agent
 }
 
-// Init initializes the agent with the given parameters.
-// It sets up the client, lock manager, model, source directory, concurrency, steps, timeout, and prompt.
+// Init sets client, locks, and runtime parameters.
+// Flow: invoked by NewAgent prior to running.
+// Yields: no yielding; configuration only.
 func (a *Agent) Init(model, src string, concurrency, steps int, timeout time.Duration, prompt string) {
 	a.setClient()
 	a.setLockManager()
@@ -55,27 +58,15 @@ func (a *Agent) Init(model, src string, concurrency, steps int, timeout time.Dur
 	a.setPrompt(prompt)
 }
 
-// Run executes the agent's main loop.
-// It iteratively interacts with the OpenAI API and processes tool calls.
+// Run is the main loop: prompt -> model -> tools -> results -> repeat.
+// Flow: top-level execution after construction.
+// Yields: returns when assistant has no tool calls or when steps exhausted.
 func (a *Agent) Run() error {
 
 	// construct initial prompt
 	a.Prompt()
 
-	a.Log.Info("")
-	a.Log.Info("  Using model: " + a.Model)
-	a.Log.Info("  Source directory: " + a.Src)
-	a.Log.Info(fmt.Sprintf("  Max steps: %d", a.Steps))
-	a.Log.Info(fmt.Sprintf("  Timeout per step: %s", a.Timeout.String()))
-	a.Log.Info(fmt.Sprintf("  Concurrency: %d", a.Concurrency))
-	a.Log.Info("")
-	
-	if a.ToolChoice != "" {
-		a.Log.Info("  Tool choice: " + a.ToolChoice)
-	}
-	if len(a.RequireTools) > 0 {
-		a.Log.Info("  Required tools: " + strings.Join(a.RequireTools, ", "))
-	}
+	a.printConfig()
 
 	// Turn loop: ask model -> maybe tool calls -> run (phased + parallel) -> feed results -> repeat
 	for step := 0; step < a.Steps; step++ {
@@ -153,7 +144,28 @@ func missingRequiredTools(required []string, calls []pkg.ToolCallLite) []string 
 	return out
 }
 
-// setClient initializes the OpenAI client for the agent.
+// printConfig logs startup settings for visibility.
+// Flow: called once after Prompt() in Run().
+// Yields: no yielding; side-effect logging.
+func (a *Agent) printConfig() {
+	a.Log.Info("")
+	a.Log.Info("  Using model: " + a.Model)
+	a.Log.Info("  Current src: " + a.Src)
+	a.Log.Info(fmt.Sprintf("  Max steps  : %d", a.Steps))
+	a.Log.Info(fmt.Sprintf("  Timeout    : %s", a.Timeout.String()))
+	a.Log.Info(fmt.Sprintf("  Concurrency: %d", a.Concurrency))
+	if a.ToolChoice != "" {
+		a.Log.Info("  Tool choice: " + a.ToolChoice)
+	}
+	if len(a.RequireTools) > 0 {
+		a.Log.Info("  Need Tools : " + strings.Join(a.RequireTools, ", "))
+	}
+	a.Log.Info("")
+}
+
+// setClient establishes the OpenAI client with tool choice.
+// Flow: during Init.
+// Yields: none.
 func (a *Agent) setClient() {
 	choice := a.ToolChoice
 	if choice == "" {
@@ -165,38 +177,51 @@ func (a *Agent) setClient() {
 	)
 }
 
-// setModel sets the model for the agent.
+// setModel stores the LLM model identifier.
+// Flow: during Init.
+// Yields: none.
 func (a *Agent) setModel(model string) {
 	a.Model = model
 }
 
-// setSrc sets the source directory for the agent.
+// setSrc sets the working source directory.
+// Flow: during Init.
+// Yields: none.
 func (a *Agent) setSrc(src string) {
 	a.Src = src
 }
 
-// setConcurrency sets the concurrency level for the agent.
+// setConcurrency limits parallelism per phase.
+// Flow: during Init.
+// Yields: none.
 func (a *Agent) setConcurrency(concurrency int) {
 	a.Concurrency = concurrency
 }
 
-// setSteps sets the maximum number of steps for the agent.
+// setSteps defines the maximum assistant turns.
+// Flow: during Init.
+// Yields: none.
 func (a *Agent) setSteps(steps int) {
 	a.Steps = steps
 }
 
-// setTimeout sets the timeout duration for the agent.
+// setTimeout defines per-turn API timeout.
+// Flow: during Init.
+// Yields: none.
 func (a *Agent) setTimeout(timeout time.Duration) {
 	a.Timeout = timeout
 }
 
-// setLockManager initializes the lock manager for the agent.
+// setLockManager prepares per-path locks for FS tools.
+// Flow: during Init.
+// Yields: none.
 func (a *Agent) setLockManager() {
 	a.Lm = pkg.NewLockManager()
 }
 
-// setPrompt sets the initial query prompt for the agent.
+// setPrompt records the initial natural-language task.
+// Flow: during Init.
+// Yields: none.
 func (a *Agent) setPrompt(q string) {
 	a.Query = q
 }
-

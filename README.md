@@ -42,6 +42,14 @@ Or run a task:
 ./bin/agent -src . -concurrency 6 -steps 8 -model gpt-4o "Create README.md and list the directory."
 ```
 
+Run commands (rwx permissions):
+- You can ask the agent to run shell commands via the new run_command tool, with per-call permissions.
+- Examples the model may choose:
+  - { cmd: "make test-one TEST_RUN='^TestWriteReadFile$'", permissions: "rx", timeout: "120s" }
+  - { cmd: "go build ./cmd/agent", permissions: "r" }
+  - { cmd: "git status", permissions: "r" }
+  - { cmd: "git add -A && git commit -m 'wip'", permissions: "rw" }
+
 ---
 
 ## What it does (in plain English)
@@ -135,6 +143,10 @@ Edge cases and interactions
 
 ---
 
+## Development
+
+See CONTRIBUTING.md for a full developer guide (setup, cross‑platform notes, Makefile usage, and raw Go commands).
+
 ## Make helpers
 
 ```
@@ -183,12 +195,6 @@ export OPENAI_API_KEY=sk-...
 
 ---
 
-## A short story
+## Flow diagram
 
-It was 4:52 PM on a Friday when Lina inherited a repo that looked like a junk drawer. Docs were stale, directories mysterious, and a demo loomed at five. She took a breath and typed:
-
-```
-agent -src . -concurrency 6 -steps 8 "List the project, write a fresh README with install/run steps, and show what changed."
-```
-
-The agent planned the steps, used only the tools it needed, and worked with surgical care: it mapped the tree, updated files atomically, and reported every move. By 4:58, the build passed, the README read like a tour guide, and the demo slid into place. Lina closed the laptop. The concierge didn’t drink coffee, but it saved hers.
+![Agent flow diagram](docs/assets/cds.agent.diagram.png)

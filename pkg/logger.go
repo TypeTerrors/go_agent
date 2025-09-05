@@ -1,106 +1,101 @@
 package pkg
 
 import (
-	"fmt"
 	"os"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Logger provides logging capabilities for the agent.
 type Logger struct{
 	enabled bool
+	l *log.Logger
+	devCaller bool
 }
 
-// NewLogger creates a new Logger instance.
-// Parameters:
-// - enabled: a boolean indicating if logging is enabled.
-func NewLogger(enabled bool) *Logger { return &Logger{enabled: enabled} }
 
-// LogEntry represents a single log entry.
+func NewLogger(enabled bool) *Logger {
+	lg := log.New(os.Stderr)
+	lg.SetLevel(log.InfoLevel)
+	lg.SetReportTimestamp(true)
+	lg.SetFormatter(log.TextFormatter)
+	// Prefix flair
+	lg.SetPrefix("AGENT")
+	styles := log.DefaultStyles()
+	styles.Timestamp = styles.Timestamp.Faint(true)
+	styles.Message = styles.Message.Faint(true).Bold(false)
+	styles.Prefix = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 1)
+	// Level badges with icons
+	styles.Levels[log.InfoLevel] = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).SetString("ℹ")
+	styles.Levels[log.WarnLevel] = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")).SetString("⚠")
+	styles.Levels[log.ErrorLevel] = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")).SetString("✖")
+	styles.Levels[log.DebugLevel] = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("135")).SetString("•")
+	// Neon-like key styling
+	styles.Keys["tool"] = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Faint(true)
+	styles.Values["tool"] = lipgloss.NewStyle().Bold(true).Faint(true)
+	styles.Keys["target"] = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Faint(true)
+	styles.Values["target"] = lipgloss.NewStyle().Bold(true).Faint(true)
+	styles.Keys["dur"] = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Faint(true)
+	styles.Keys["msg"] = lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
+	styles.Keys["err"] = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	styles.Values["err"] = lipgloss.NewStyle().Bold(true)
+	lg.SetStyles(styles)
+	dev := os.Getenv("LOG_CALLER") == "1"
+	lg.SetReportCaller(dev)
+	if dev {
+		lg.SetCallerFormatter(log.ShortCallerFormatter)
+	}
+	return &Logger{enabled: enabled, l: lg, devCaller: dev}
+}
+
 type LogEntry struct{
 	l *Logger
 	tool string
 	target string
 	start time.Time
+	sub *log.Logger
 }
 
-var (
-	styleTool      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	stylePath      = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))
-	styleInfo      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	styleError     = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	styleOK        = lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
-	styleAsstTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
-	styleAsstBody  = lipgloss.NewStyle().Foreground(lipgloss.Color("219"))
-)
+func (le *LogEntry) Preview(title, content string) {
+	// no-op: previews disabled
+}
 
-func StyleAsstTitle() lipgloss.Style { return styleAsstTitle }
-func StyleAsstBody() lipgloss.Style  { return styleAsstBody }
-func StyleInfo() lipgloss.Style      { return styleInfo }
-func StylePath() lipgloss.Style      { return stylePath }
-func StyleTool() lipgloss.Style      { return styleTool }
-func StyleOK() lipgloss.Style        { return styleOK }
-func StyleError() lipgloss.Style     { return styleError }
-
-// Start begins a new log entry for a tool operation.
-// Parameters:
-// - tool: the name of the tool being executed.
-// - target: the target of the tool operation.
 func (l *Logger) Start(tool, target string) *LogEntry {
 	if l == nil || !l.enabled { return &LogEntry{} }
-	le := &LogEntry{l: l, tool: tool, target: target, start: time.Now()}
-	fmt.Fprintf(os.Stderr, "%s %s %s\n",
-		styleInfo.Render(""),
-		styleTool.Render(tool),
-		stylePath.Render(target),
-	)
-	return le
+	sub := l.l.With("tool", tool, "target", target)
+	sub.Info("start")
+	return &LogEntry{l: l, tool: tool, target: target, start: time.Now(), sub: sub}
 }
 
-// Success logs a successful tool operation.
-// Parameters:
-// - msg: a message describing the success.
 func (le *LogEntry) Success(msg string) {
 	if le == nil || le.l == nil || !le.l.enabled { return }
-	d := time.Since(le.start)
-	fmt.Fprintf(os.Stderr, "%s %s (%s) %s\n",
-		styleOK.Render(""),
-		styleTool.Render(le.tool),
-		styleInfo.Render(d.Truncate(time.Millisecond).String()),
-		msg,
-	)
+	d := time.Since(le.start).Truncate(time.Millisecond)
+	le.sub.Info("ok", "dur", d.String(), "msg", msg)
 }
 
-// Error logs an error that occurred during a tool operation.
-// Parameters:
-// - err: the error that occurred.
 func (le *LogEntry) Error(err error) {
 	if le == nil || le.l == nil || !le.l.enabled { return }
-	d := time.Since(le.start)
-	fmt.Fprintf(os.Stderr, "%s %s (%s) %s\n",
-		styleError.Render(""),
-		styleTool.Render(le.tool),
-		styleInfo.Render(d.Truncate(time.Millisecond).String()),
-		styleError.Render(err.Error()),
-	)
+	d := time.Since(le.start).Truncate(time.Millisecond)
+	le.sub.Error("error", "dur", d.String(), "err", err)
 }
 
-// Info logs a simple informational line.
 func (l *Logger) Info(msg string) {
 	if l == nil || !l.enabled { return }
-	fmt.Fprintf(os.Stderr, "%s %s\n", styleInfo.Render("ℹ"), styleInfo.Render(msg))
+	l.l.Info(msg)
 }
 
-// PrintAssistant logs the assistant's response.
-// Parameters:
-// - content: the content of the assistant's response.
 func (l *Logger) PrintAssistant(content string) {
-	if l == nil || !l.enabled {
-		fmt.Println("\n--- ASSISTANT ---\n" + content)
+	if l == nil {
 		return
 	}
-	fmt.Fprintln(os.Stderr, styleAsstTitle.Render("\n--- ASSISTANT ---"))
-	fmt.Fprintln(os.Stderr, styleAsstBody.Render(content))
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")).Render("\n--- ASSISTANT ---")
+	body := lipgloss.NewStyle().Foreground(lipgloss.Color("219")).Render(content)
+	if !l.enabled {
+		os.Stdout.WriteString(title + "\n" + body + "\n")
+		return
+	}
+	l.l.Info("assistant")
+	os.Stderr.WriteString(title + "\n")
+	os.Stderr.WriteString(body + "\n")
 }

@@ -2,26 +2,36 @@ package prompts
 
 import _ "embed"
 
-// SystemMessage is the embedded system message for the agent.
+// SystemMessage contains the system prompt used at session start.
+// Flow: loaded in Prompt() to seed model behavior.
 //go:embed system_message.md
 var SystemMessage string
 
-// ListDir is the embedded prompt for the list_dir tool.
+// ListDir describes the list_dir tool exposed to the model.
+// Flow: registered in Prompt() tool schema.
 //go:embed list_dir.md
 var ListDir string
 
-// ListDirRecursive is the embedded prompt for the list_dir_recursive tool.
+// ListDirRecursive describes the list_dir_recursive tool.
+// Flow: registered in Prompt() tool schema.
 //go:embed list_dir_recursive.md
 var ListDirRecursive string
 
-// ReadFile is the embedded prompt for the read_file tool.
+// ReadFile describes the read_file tool.
+// Flow: registered in Prompt() tool schema.
 //go:embed read_file.md
 var ReadFile string
 
-// WriteFile is the embedded prompt for the write_file tool.
+// WriteFile describes the write_file tool.
+// Flow: registered in Prompt() tool schema.
 //go:embed write_file.md
 var WriteFile string
 
-// DeletePath is the embedded prompt for the delete_path tool.
+// DeletePath describes the delete_path tool.
+// Flow: registered in Prompt() tool schema.
 //go:embed delete_path.md
 var DeletePath string
+
+// RunCommand describes the run_command tool.
+//go:embed run_command.md
+var RunCommand string

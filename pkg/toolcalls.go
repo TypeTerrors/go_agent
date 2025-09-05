@@ -8,8 +8,8 @@ import (
 	"github.com/openai/openai-go/v2"
 )
 
-// ToolCallLite provides a local, SDK-agnostic view of a tool call.
-// It contains only the necessary information for planning.
+// ToolCallLite is a compact, SDK-agnostic tool call used for planning.
+// Flow: created after model returns tool calls, before planning.
 type ToolCallLite struct {
 	ID       string
 	FuncName string
@@ -18,11 +18,8 @@ type ToolCallLite struct {
 	DirAbs   string // absolute directory for list_dir
 }
 
-// AnalyzeLite extracts path/dir from args for dependency building.
-// Parameters:
-// - root: the root directory for the operations.
-// - name: the name of the tool.
-// - rawArgs: the raw JSON string of arguments for the tool.
+// AnalyzeLite extracts absolute path and directory for a tool call.
+// Flow: used by PlanPhases() to populate fields for ordering.
 func AnalyzeLite(root, name, rawArgs string) (absPath, dir string) {
 	var a map[string]any
 	_ = json.Unmarshal([]byte(rawArgs), &a)
@@ -41,13 +38,14 @@ func AnalyzeLite(root, name, rawArgs string) (absPath, dir string) {
 		}
 		abs := filepath.Join(root, d)
 		return "", filepath.Clean(abs)
+	case "run_command":
+		return "", root
 	}
 	return "", ""
 }
 
-// ExtractToolCalls converts SDK tool calls to a slice of ToolCallLite.
-// Parameters:
-// - msg: the OpenAI chat completion message containing the tool calls.
+// ExtractToolCalls converts SDK tool calls into ToolCallLite slice.
+// Flow: called in Run() immediately after receiving assistant message.
 func ExtractToolCalls(msg openai.ChatCompletionMessage) []ToolCallLite {
 	out := make([]ToolCallLite, len(msg.ToolCalls))
 	for i, tc := range msg.ToolCalls {

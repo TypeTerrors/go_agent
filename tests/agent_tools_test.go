@@ -3,8 +3,10 @@ package tests
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"cds.agents.app/internal/services/agent"
 )
@@ -65,4 +67,47 @@ func TestDeletePathRecursive(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "a", "b")); !os.IsNotExist(err) {
 		t.Fatalf("expected a/b to be gone, err=%v", err)
 	}
+}
+
+// TestRunCommand_Success tests a simple echo command.
+func TestRunCommand_Success(t *testing.T) {
+	root := t.TempDir()
+	a := newTestAgent(root)
+	out, err := a.Tooling(root, "run_command", `{"cmd":"echo hello","permissions":"r"}`)
+	if err != nil { t.Fatalf("run_command err: %v", err) }
+	if !strings.Contains(out, "hello") { t.Fatalf("expected echo output, got: %q", out) }
+}
+
+// TestRunCommand_WriteDenied ensures write-like ops need 'w'.
+func TestRunCommand_WriteDenied(t *testing.T) {
+	root := t.TempDir()
+	a := newTestAgent(root)
+	_, err := a.Tooling(root, "run_command", `{"cmd":"sh -lc 'echo hi > f.txt'","permissions":"r"}`)
+	if err == nil { t.Fatalf("expected error for write without 'w'") }
+}
+
+// TestRunCommand_ExecRequiresX ensures path exec needs 'x'.
+func TestRunCommand_ExecRequiresX(t *testing.T) {
+	if runtime.GOOS == "windows" { t.Skip("bash dependency not available on windows in CI") }
+	root := t.TempDir()
+	a := newTestAgent(root)
+	// create a small script
+	script := filepath.Join(root, "tool.sh")
+	if err := os.WriteFile(script, []byte("#!/usr/bin/env bash\necho ok\n"), 0o755); err != nil { t.Fatalf("write script: %v", err) }
+	_, err := a.Tooling(root, "run_command", `{"cmd":"./tool.sh","permissions":"r"}`)
+	if err == nil { t.Fatalf("expected error for exec without 'x'") }
+	out, err := a.Tooling(root, "run_command", `{"cmd":"./tool.sh","permissions":"rx"}`)
+	if err != nil { t.Fatalf("unexpected err with x: %v", err) }
+	if !strings.Contains(out, "ok") { t.Fatalf("expected ok, got: %q", out) }
+}
+
+// TestRunCommand_Timeout validates timeout behavior.
+func TestRunCommand_Timeout(t *testing.T) {
+	if runtime.GOOS == "windows" { t.Skip("bash dependency not available on windows in CI") }
+	root := t.TempDir()
+	a := newTestAgent(root)
+	start := time.Now()
+	_, err := a.Tooling(root, "run_command", `{"cmd":"sleep 1","permissions":"r","timeout":"200ms"}`)
+	if err == nil { t.Fatalf("expected timeout error") }
+	if time.Since(start) > 2*time.Second { t.Fatalf("timeout did not trigger promptly") }
 }

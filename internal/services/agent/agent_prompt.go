@@ -9,8 +9,9 @@ import (
 	"github.com/openai/openai-go/v2/shared"
 )
 
-// Prompt constructs the initial prompt for the agent's interaction with the OpenAI API.
-// It sets up the system message, user messages, and available tools.
+// Prompt prepares initial messages and tool schemas for the model.
+// Flow: called once at the start of Run().
+// Yields: none; sets Params for subsequent API call.
 func (a *Agent) Prompt() {
 
 	params := openai.ChatCompletionNewParams{
@@ -79,10 +80,22 @@ func (a *Agent) Prompt() {
 					"required": []string{"path"},
 				},
 			}),
+			openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+				Name:        "run_command",
+				Description: openai.String(prompts.RunCommand),
+				Parameters: openai.FunctionParameters{
+					"type": "object",
+					"properties": map[string]any{
+						"cmd":         map[string]any{"type": "string"},
+						"permissions": map[string]any{"type": "string"},
+						"timeout":     map[string]any{"type": "string"},
+					},
+					"required": []string{"cmd"},
+				},
+			}),
 		},
 	}
 
-	// Your SDK exposes this as: minimal/low/medium/high.
 	modelLower := strings.ToLower(a.Model)
 	if strings.HasPrefix(modelLower, "gpt-5") || strings.HasPrefix(modelLower, "o") {
 		params.ReasoningEffort = shared.ReasoningEffortHigh
