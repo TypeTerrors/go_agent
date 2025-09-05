@@ -1,0 +1,1 @@
+Recursively list files and directories under a relative path ('.' for the source directory). Output one entry per line, prefix directories with 'DIR  ' and files with 'FILE ' and include relative paths from the provided dir.

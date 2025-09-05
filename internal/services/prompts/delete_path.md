@@ -1,0 +1,1 @@
+Delete a file or directory (recursively) at a relative path. Use with care; operation is confined to the source directory.

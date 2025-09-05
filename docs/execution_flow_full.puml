@@ -1,0 +1,282 @@
+@startuml Component_And_Code_Map
+' Comprehensive, repo-wide component map generated from the current source tree
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam dpi 140
+
+package "cmd/agent" {
+  [cmd/agent/main.go]
+}
+
+package "internal/cli" {
+  [internal/cli/root.go]
+}
+
+package "internal/services/agent" {
+  [internal/services/agent/agent.go]
+  [internal/services/agent/agent_prompt.go]
+  [internal/services/agent/agent_phases.go]
+  [internal/services/agent/agent_tool.go]
+}
+
+package "internal/services/prompts" {
+  [internal/services/prompts/prompts.go]
+  [internal/services/prompts/system_message.md]
+  [internal/services/prompts/list_dir.md]
+  [internal/services/prompts/list_dir_recursive.md]
+  [internal/services/prompts/read_file.md]
+  [internal/services/prompts/write_file.md]
+  [internal/services/prompts/delete_path.md]
+}
+
+package pkg {
+  [pkg/flags.go]
+  [pkg/lockmanager.go]
+  [pkg/logger.go]
+  [pkg/toolcalls.go]
+}
+
+package tests {
+  [tests/agent_tools_test.go]
+}
+
+rectangle "OpenAI API (github.com/openai/openai-go/v2)" as OpenAI
+rectangle "Cobra CLI (github.com/spf13/cobra)" as Cobra
+rectangle "Fang runner (github.com/charmbracelet/fang)" as Fang
+rectangle "Lipgloss (github.com/charmbracelet/lipgloss)" as Lipgloss
+rectangle "Go stdlib: os, path/filepath, sync, time" as Stdlib
+
+[cmd/agent/main.go] --> [internal/cli/root.go] : BuildRootCmd/Execute
+[internal/cli/root.go] ..> Cobra
+[internal/cli/root.go] ..> Fang
+[internal/cli/root.go] --> [internal/services/agent/agent.go] : NewAgent(config) -> Run()
+[internal/services/agent/agent.go] ..> [internal/services/agent/agent_prompt.go] : Prompt()
+[internal/services/agent/agent.go] ..> [internal/services/agent/agent_phases.go] : PlanPhases()/RunPhases()
+[internal/services/agent/agent.go] ..> [internal/services/agent/agent_tool.go] : Tooling()
+[internal/services/agent/agent_prompt.go] ..> [internal/services/prompts/prompts.go] : embeds *.md
+[internal/services/prompts/prompts.go] ..> [internal/services/prompts/system_message.md]
+[internal/services/prompts/prompts.go] ..> [internal/services/prompts/list_dir.md]
+[internal/services/prompts/prompts.go] ..> [internal/services/prompts/list_dir_recursive.md]
+[internal/services/prompts/prompts.go] ..> [internal/services/prompts/read_file.md]
+[internal/services/prompts/prompts.go] ..> [internal/services/prompts/write_file.md]
+[internal/services/prompts/prompts.go] ..> [internal/services/prompts/delete_path.md]
+
+[internal/services/agent/agent.go] ..> [pkg/logger.go]
+[internal/services/agent/agent_tool.go] ..> [pkg/lockmanager.go]
+[internal/services/agent/agent_phases.go] ..> [pkg/toolcalls.go]
+[pkg/logger.go] ..> Lipgloss
+
+[internal/services/agent/agent.go] --> OpenAI : Chat Completions
+[pkg/lockmanager.go] ..> Stdlib
+[internal/services/agent/agent_tool.go] ..> Stdlib
+[pkg/toolcalls.go] ..> OpenAI
+[pkg/flags.go] ..> [internal/cli/root.go] : alternative parse path (not used by Cobra)
+[tests/agent_tools_test.go] ..> [internal/services/agent/agent_tool.go]
+@enduml
+
+@startuml End_to_End_Execution_Sequence
+skinparam shadowing false
+skinparam dpi 140
+actor User
+participant "cmd/agent/main.go" as Main
+participant "internal/cli/root.go" as CLI
+participant "Agent (internal/services/agent)" as Agent
+participant "Logger (pkg)" as Logger
+participant "LockManager (pkg)" as LM
+participant "File System" as FS
+participant "OpenAI API" as OAI
+
+User -> Main : run `agent [flags] "task"`
+Main -> CLI : BuildRootCmd()
+CLI --> Main : *cobra.Command
+User -> CLI : Execute(root, fang opts)
+CLI -> Agent : NewAgent(Config)
+Agent -> Agent : Init(model, src, concurrency, steps, timeout, prompt)
+Agent -> Logger : NewLogger(log)
+Agent -> Agent : Prompt() // system+user msgs and tools
+
+loop up to Steps
+  Agent -> OAI : Chat.Completions.New(params)
+  OAI --> Agent : message (content + optional ToolCalls)
+  alt no tool calls
+    Agent -> Logger : PrintAssistant(content)
+    Agent --> CLI : return nil
+  else tool calls present
+    Agent -> Agent : toolCalls = ExtractToolCalls(msg)
+    Agent -> Agent : phases = PlanPhases(src, toolCalls)
+    group for each phase (sequential)
+      loop each call in phase (parallel; bounded by Concurrency)
+        Agent -> Agent : Tooling(src, name, rawArgs)
+        alt list_dir / list_dir_recursive / read_file
+          Agent -> LM : Get(path or dir).RLock()
+          Agent -> Logger : Start(tool, target)
+          Agent -> FS : read/list
+          Agent -> Logger : Success/Error
+          Agent -> LM : RUnlock()
+        else write_file / delete_path
+          Agent -> LM : Get(path).Lock()
+          Agent -> Logger : Start(tool, target)
+          Agent -> FS : atomic write / remove
+          Agent -> Logger : Success/Error
+          Agent -> LM : Unlock()
+        end
+        Agent -> Agent : results[i] = (id, out)
+      end
+    end
+    Agent -> Agent : append ToolMessage(results[i]) to params
+    note right
+      Next Chat.Completions request includes all tool results
+      appended as tool messages for this turn.
+    end note
+  end
+end
+@enduml
+
+@startuml Agent_Run_Activity
+skinparam shadowing false
+skinparam dpi 140
+start
+:Prompt() -> build Chat params (system, user, tools, temp=0 unless model starts with gpt-5);
+repeat
+  :Chat.Completions.New(params);
+  if (choices empty?) then (yes)
+    :error "empty completion";
+    stop
+  endif
+  if (ToolCalls present?) then (yes)
+    :ExtractToolCalls;
+    :PlanPhases -> phases;
+    :RunPhases -> execute tools by phases with concurrency;
+    :Append all ToolMessage(results) to params;
+  else (no)
+    :PrintAssistant(content);
+    stop
+  endif
+repeat while (step < Steps)
+:stopped: exceeded max steps;
+stop
+@enduml
+
+@startuml PlanPhases_Detail
+skinparam shadowing false
+skinparam dpi 140
+start
+:For each call i\nAnalyzeLite(root,name,args) ->\nfill PathAbs (file ops), DirAbs (list_dir);
+:Build dependency graph (u -> v):\n- Same-file writes ordered deterministically;\n- write -> read on same file;\n- any read/write -> delete on same file;\n- for list_dir(dir): writes/deletes in dir -> list_dir;
+:Kahn topological layering -> phases (levels);
+if (cycle?) then (yes)
+  :fallback single phase in original order;
+endif
+:return phases;
+stop
+@enduml
+
+@startuml Tooling_Detail
+skinparam shadowing false
+skinparam dpi 140
+start
+:Parse JSON args; Guard path stays under src\n(filepath.Join + Rel check);
+switch (tool)
+case (list_dir)
+  :RLock(dir); os.ReadDir; format lines as\n"DIR name" / "FILE name";
+  :Success or Error; RUnlock;
+  break
+case (list_dir_recursive)
+  :RLock(dir); filepath.WalkDir; relative paths\nfrom provided dir root;
+  :Success or Error; RUnlock;
+  break
+case (read_file)
+  :RLock(file); os.ReadFile -> string;
+  :Success or Error; RUnlock;
+  break
+case (write_file)
+  :Lock(file); WriteAtomic:\nMkdirAll, CreateTemp, write, Sync, Close, Rename;
+  :Success or Error; Unlock;
+  break
+case (delete_path)
+  :Lock(path); os.RemoveAll;
+  :Success or Error; Unlock;
+  break
+else
+  :error unknown tool;
+endswitch
+stop
+@enduml
+
+@startuml Types_and_Data
+skinparam shadowing false
+skinparam dpi 140
+package pkg {
+  class Config {
+    +Model: string
+    +Src: string
+    +Concurrency: int
+    +Steps: int
+    +Timeout: time.Duration
+    +Prompt: string
+    +Log: bool
+  }
+  class Logger {
+    -enabled: bool
+    +Start(tool,target): LogEntry
+    +PrintAssistant(content)
+  }
+  class LogEntry {
+    -tool: string
+    -target: string
+    -start: time.Time
+    +Success(msg)
+    +Error(err)
+  }
+  class LockManager {
+    -m: sync.Map
+    +Get(path): *sync.RWMutex
+    +WriteAtomic(filename, data): error
+  }
+  class ToolCallLite {
+    +ID: string
+    +FuncName: string
+    +FuncArgs: string
+    +PathAbs: string
+    +DirAbs: string
+  }
+}
+package internal.services.agent {
+  class Agent {
+    +Client: openai.Client
+    +Src: string
+    +Concurrency: int
+    +Steps: int
+    +Model: string
+    +Timeout: time.Duration
+    +Params: openai.ChatCompletionNewParams
+    +Lm: *LockManager
+    +Log: *Logger
+    +Query: string
+    +Init(...)
+    +Run() error
+    +Prompt()
+    +PlanPhases(root, calls) [][]int
+    +RunPhases(toolCalls, phases, msg) error
+    +Tooling(root, name, rawArgs) (string,error)
+  }
+}
+Agent --> Config : constructed from CLI
+Agent --> Logger
+Agent --> LockManager
+Agent --> ToolCallLite : for planning
+@enduml
+
+@startuml Notes_and_Considerations
+skinparam shadowing false
+skinparam dpi 140
+note as N1
+- internal/cli/root.go uses Cobra + Fang; pkg/flags.go provides an alternative flag parser not used by the Cobra path.
+- RunPhases appends tool results back to Agent.Params so the next LLM call sees them.
+- Concurrency is enforced per phase via a buffered semaphore and errgroup.
+- Per-path RWMutexes in LockManager prevent races between tools within a phase.
+- Path resolution prevents access outside the configured source directory.
+- Agent returns immediately if the assistant replies without tool calls; otherwise it loops until steps exhausted.
+end note
+@enduml

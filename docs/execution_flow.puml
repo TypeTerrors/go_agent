@@ -1,0 +1,213 @@
+@startuml Component_Overview
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam dpi 140
+
+package "cmd/agent" {
+  [main.go]
+}
+package "internal/cli" {
+  [root.go]
+}
+package "internal/services/agent" {
+  [agent.go]
+  [agent_prompt.go]
+  [agent_phases.go]
+  [agent_tool.go]
+}
+package "internal/services/prompts" {
+  [prompts.go]
+  [*.md]
+}
+package "pkg" {
+  [flags.go]
+  [lockmanager.go]
+  [logger.go]
+  [toolcalls.go]
+}
+
+[main.go] --> [root.go] : BuildRootCmd/Execute
+[root.go] --> [agent.go] : NewAgent/Run
+[agent.go] ..> [agent_prompt.go] : Prompt()
+[agent.go] ..> [agent_phases.go] : PlanPhases/RunPhases
+[agent.go] ..> [agent_tool.go] : Tooling()
+[agent_prompt.go] ..> [prompts.go] : embeds strings
+[agent.go] ..> [logger.go]
+[agent_tool.go] ..> [lockmanager.go]
+[agent_phases.go] ..> [toolcalls.go]
+[flags.go] ..> [root.go] : (alternative CLI)
+
+rectangle "OpenAI API (github.com/openai/openai-go/v2)" as OpenAI
+[agent.go] --> OpenAI : Chat Completions
+@enduml
+
+@startuml Turn_Sequence
+skinparam shadowing false
+skinparam dpi 140
+actor User
+participant "cmd/agent/main.go" as Main
+participant "internal/cli/root.go" as CLI
+participant "internal/services/agent.Agent" as Agent
+participant "pkg.Logger" as Logger
+participant "pkg.LockManager" as LM
+participant "File System" as FS
+participant "OpenAI API" as OAI
+
+User -> Main : run agent "task"
+Main -> CLI : BuildRootCmd()
+CLI --> Main : *cobra.Command
+User -> CLI : Execute(root, fang opts)
+CLI -> Agent : NewAgent(Config)
+Agent -> Agent : Init(model, src, concurr, steps, timeout, prompt)
+Agent -> Logger : NewLogger(log)
+Agent -> Agent : Prompt() // build system+user msgs and tools
+
+loop up to Steps
+  Agent -> OAI : Chat.Completions.New(params)
+  OAI --> Agent : message (maybe ToolCalls)
+  alt no tool calls
+    Agent -> Logger : PrintAssistant(content)
+    Agent --> CLI : return
+  else tool calls present
+    Agent -> Agent : toolCalls = ExtractToolCalls(msg)
+    Agent -> Agent : phases = PlanPhases(src, toolCalls)
+    group for each phase (sequential)
+      loop each call in phase (parallel, bounded by concurrency)
+        Agent -> Agent : Tooling(src, name, rawArgs)
+        alt list_dir / list_dir_recursive / read_file
+          Agent -> LM : Get(path/dir).RLock()
+          Agent -> Logger : Start(tool, target)
+          Agent -> FS : read/list
+          Agent -> Logger : Success/Error
+          Agent -> LM : RUnlock()
+        else write_file / delete_path
+          Agent -> LM : Get(path).Lock()
+          Agent -> Logger : Start(tool, target)
+          Agent -> FS : atomic write / remove
+          Agent -> Logger : Success/Error
+          Agent -> LM : Unlock()
+        end
+        Agent -> Agent : collect results[i]
+      end
+    end
+    Agent -> Agent : append ToolMessage(results[i]) to params
+  end
+end
+@enduml
+
+@startuml PlanPhases_Activity
+skinparam shadowing false
+skinparam dpi 140
+start
+:Normalize each call with AnalyzeLite(root,name,args)
+ -> sets c.PathAbs and c.DirAbs;
+:Build dependency graph (u->v):
+- same-file deterministic writes order;
+- writes happen before reads (same file);
+- any read/write before delete (same file);
+- for list_dir of a directory, writes/deletes in that dir happen before list_dir;
+:Run Kahn's algorithm to produce phases (topological levels);
+if (cycle detected?) then (yes)
+  :fallback: single sequential phase in input order;
+else (no)
+  :return phases;
+endif
+stop
+@enduml
+
+@startuml Tooling_Activity
+skinparam shadowing false
+skinparam dpi 140
+start
+:parse JSON args;
+:resolve absolute path under src (guard against escaping root);
+switch (tool name)
+case (list_dir)
+  :RLock dir;
+  :os.ReadDir + format as DIR/FILE lines;
+  :Success;
+  :RUnlock;
+  break
+case (list_dir_recursive)
+  :RLock dir;
+  :filepath.WalkDir + relative paths;
+  :Success;
+  :RUnlock;
+  break
+case (read_file)
+  :RLock file;
+  :os.ReadFile(content);
+  :Success;
+  :RUnlock;
+  break
+case (write_file)
+  :Lock file;
+  :WriteAtomic -> MkdirAll + CreateTemp + write + fsync + rename;
+  :Success;
+  :Unlock;
+  break
+case (delete_path)
+  :Lock path;
+  :os.RemoveAll;
+  :Success;
+  :Unlock;
+  break
+else
+  :error unknown tool;
+endswitch
+stop
+@enduml
+
+@startuml Packages_and_Data
+skinparam shadowing false
+skinparam dpi 140
+package pkg {
+  class Config {
+    +Model: string
+    +Src: string
+    +Concurrency: int
+    +Steps: int
+    +Timeout: time.Duration
+    +Prompt: string
+    +Log: bool
+  }
+  class Logger {
+    -enabled: bool
+    +Start(tool,target) : LogEntry
+    +PrintAssistant(content)
+  }
+  class LockManager {
+    -m: sync.Map
+    +Get(path): *sync.RWMutex
+    +WriteAtomic(filename, data): error
+  }
+  class ToolCallLite {
+    +ID, FuncName, FuncArgs: string
+    +PathAbs, DirAbs: string
+  }
+}
+package internal.services.agent {
+  class Agent {
+    +Client: openai.Client
+    +Src: string
+    +Concurrency, Steps: int
+    +Model: string
+    +Timeout: time.Duration
+    +Params: openai.ChatCompletionNewParams
+    +Lm: *LockManager
+    +Log: *Logger
+    +Query: string
+    +Init(...)
+    +Run() error
+    +Prompt()
+    +PlanPhases(root, calls) [][]int
+    +RunPhases(toolCalls, phases, msg) error
+    +Tooling(root, name, rawArgs) (string,error)
+  }
+}
+Agent --> Config : constructed from CLI
+Agent --> Logger
+Agent --> LockManager
+Agent --> ToolCallLite : uses for planning
+@enduml
