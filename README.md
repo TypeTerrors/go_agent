@@ -1,6 +1,6 @@
-# Agent CLI — your codebase concierge
+# Workflow Agent
 
-Meet a small, careful CLI that plans and performs safe file operations inside one folder. Give it a goal; it makes a plan, calls tools (read, list, write, delete), and reports every step.
+Ever want to run an AI powered agent in a CI/CD ? Now you can! With Agent make security audit tests inside a workflow and make changes, Increase unit tests coverage and apply edits during a pipeline, or make documentation up to date on each action!
 
 ---
 
